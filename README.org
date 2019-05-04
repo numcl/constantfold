@@ -1,0 +1,129 @@
+
+* Constantfold - User-defined constant folding facility 
+
+This is a supporting library for NUMCL.
+It provides a single macro, =(constantfold name &key commutative associative copier)=.
+
+=constantfold= registers the function =NAME= as an additional form that is
+considered as a candidate for a constant.  For example,
+
+#+begin_src lisp
+(defstruct point2d
+  (x 0 :type 'real)
+  (y 0 :type 'real))
+
+(defun point2d-add/2 (p1 p2)
+  (ematch* (p1 p2)
+    (((point2d :x x1 :y y1)
+      (point2d :x x2 :y y2))
+     (make-point2d :x (+ x1 x2) :y (+ y1 y2)))))
+
+(defun point2d-add (&rest args)
+  (reduce #'point2d-add/2 args))
+
+(constantfold make-point2d :copier copy-point2d)
+(constantfold point2d-add  :copier copy-point2d :commutative t :associative t)
+#+end_src
+
+This allows the compiler to constant fold
+
+#+begin_src lisp
+(defun fn1 () (point2d-add (make-point2d :x 1 :y 2) (make-point2d :x 3 :y 4)))
+#+end_src
+
+and
+
+#+begin_src lisp
+(defun fn1 () (point2d-add #S(point2d :x 1 :y 2) #S(point2d :x 3 :y 4)))
+#+end_src
+
+into
+
+#+begin_src lisp
+(defun fn1 () (copy-point2d #S(point2d :x 4 :y 6))).
+#+end_src
+
+When =:associative= and/or =:commutative= is true, it performs the corresponding
+code morphing and tries to fold constants as much as possible.  For example,
+
+#+begin_src lisp
+(defun fn2 (p1 p2 x y)
+  (point2d-add (make-point2d :x 1 :y 2)
+               p1
+               (make-point2d :x 3 :y 4)
+               p2
+               (make-point2d :x x :y y)))
+#+end_src
+
+gets compiled into
+
+#+begin_src lisp
+(defun fn2 (p1 p2 x y)
+  (point2d-add (copy-point2d #S(point2d :x 4 :y 6))
+               p1
+               p2
+               (make-point2d :x x :y y)))
+#+end_src
+
+due to commutativity.
+
+This library preserves the original semantics of the code. For example,
+
+#+begin_src lisp
+(defun fn3 ()
+  (make-point2d :x 1 :y 2))
+#+end_src
+
+originally always instantiates a new object. This is compiled into
+
+#+begin_src lisp
+(defun fn3 ()
+  (copy-point2d #S(point2d :x 1 :y 2)))
+#+end_src
+
+which also instantiates a new object.
+The reason why =fn1/fn2= are allowed to remove some instance creations while
+=fn3= does not perform the pruning is that the result of =make-point2d= in =fn1/fn2=
+are so-called *rvalues* which are not visible to the user
+while the result of =(make-point2d :x 1 :y 2)= is going to be returned to the user
+and is thus an *lvalue*.
+
+It might then be confusing why =fn2= does not completely remove the instantiation.
+This is because =point2d-add= may perform a destructive operation on the argument,
+and thus the value (e.g. slots) of the constant could be modified.
+=copy-point2d= is called in order to avoid the effect of this destructive operation.
+
+COPIER could be ommited when the object is known to be immutable
+and there is no need for copying the object.
+In this case the compilation result always returns the same object under =EQ=.
+
+Note that if the result of the constant folding is an object of class
+=CL:STANDARD-OBJECT= / =CL:STRUCTURE-OBJECT= / =CL:CONDITION= / =CL:CLASS=, the
+corresponding =CL:MAKE-LOAD-FORM= method should be defined.
+
+** Dependencies
+This library is at least tested on implementation listed below:
+
++ SBCL 1.4.12 on X86-64 Linux 4.4.0-141-generic (author's environment)
++ SBCL 1.5.1  on X86-64 Linux 4.4.0-141-generic (author's environment)
+
+Also, it depends on the following libraries:
+
++ trivia by *Masataro Asai* :
+    NON-optimized pattern matcher compatible with OPTIMA, with extensible optimizer interface and clean codebase
++ alexandria by *Nikodemus Siivola <nikodemus@sb-studio.net>, and others.* :
+    Alexandria is a collection of portable public domain utilities.
++ iterate by ** :
+    Jonathan Amsterdam's iterator/gatherer/accumulator facility
++ lisp-namespace by *Masataro Asai* :
+    Provides LISP-N --- extensible namespaces in Common Lisp.
+
+[[./constantfold.png]]
+
+** Author, License, Copyright
+
+Masataro Asai (guicho2.71828@gmail.com)
+
+Licensed under LGPL v3.
+
+Copyright (c) 2019 IBM Corporation
